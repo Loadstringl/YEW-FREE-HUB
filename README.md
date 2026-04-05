@@ -1,5 +1,5 @@
 -- YEW FREE Hub - Blade Ball V1.0
--- 密码: YEW666 | 完整功能版 | 球速每秒更新一次
+-- 密码: YEW666 | 基于其他脚本正确逻辑重写
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
@@ -53,117 +53,76 @@ local currentJump = 50
 local volumeLevel = 1
 local colorHue = 0
 local selectedTheme = "Default"
-local selectedSword = "Default Sword"
+local selectedSword = ""
 local selectedPlayerSkin = "Default"
 local flyBodyVelocity = nil
 local flyBodyGyro = nil
 
--- ============ 球体检测 ============
-local BallsFolder = nil
+-- ============ 球体检测 (其他脚本的正确方式) ============
 local currentBall = nil
 local ballSpeed = 0
-local lastPos = nil
-local lastUpdateTime = tick()
+local ballVelocity = Vector3.new(0, 0, 0)
+local ballPosition = Vector3.new(0, 0, 0)
 
--- 等待 Balls 文件夹
-local function waitForBallsFolder()
-    while not BallsFolder do
-        BallsFolder = Workspace:FindFirstChild("Balls")
-        if not BallsFolder then
-            task.wait(0.1)
-        end
-    end
-end
-
--- 验证球是否有效
-local function VerifyBall(Ball)
-    if typeof(Ball) == "Instance" and Ball:IsA("BasePart") and Ball:IsDescendantOf(BallsFolder) then
-        if Ball:GetAttribute("realBall") == true then
-            return true
-        end
-    end
-    return false
-end
-
--- 获取当前真实球
-local function getCurrentBall()
-    if not BallsFolder then return nil end
-    for _, ball in pairs(BallsFolder:GetChildren()) do
-        if VerifyBall(ball) then
-            return ball
-        end
-    end
-    return nil
-end
-
--- 球速每秒更新一次
-local function startSpeedUpdateLoop()
-    task.spawn(function()
-        while true do
-            task.wait(1)  -- 每秒更新一次
-            if currentBall and lastPos then
-                local currentPos = currentBall.Position
-                local distance = (currentPos - lastPos).Magnitude
-                ballSpeed = distance
-                lastPos = currentPos
-            elseif currentBall then
-                lastPos = currentBall.Position
-                ballSpeed = 0
-            else
-                currentBall = getCurrentBall()
-                if currentBall then
-                    lastPos = currentBall.Position
+-- 实时检测球
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        -- 搜索球体
+        for _, v in pairs(Workspace:GetDescendants()) do
+            if v:IsA("BasePart") and (v.Name == "Ball" or v.Name:lower():find("ball")) then
+                if currentBall ~= v then
+                    currentBall = v
+                    print("✅ 球体已检测到: " .. v.Name)
                 end
-                ballSpeed = 0
+                break
             end
         end
-    end)
-end
-
--- 监听新球出现
-local function setupBallListener()
-    if not BallsFolder then return end
-    
-    BallsFolder.ChildAdded:Connect(function(Ball)
-        if VerifyBall(Ball) then
-            currentBall = Ball
-            lastPos = Ball.Position
-            print("✅ 球体已检测到")
+        
+        if currentBall and currentBall.Parent then
+            -- 使用 AssemblyLinearVelocity 获取真实速度 (其他脚本的方法)
+            if currentBall.AssemblyLinearVelocity then
+                ballVelocity = currentBall.AssemblyLinearVelocity
+                ballSpeed = ballVelocity.Magnitude
+            end
+            ballPosition = currentBall.Position
+        else
+            ballSpeed = 0
+            ballVelocity = Vector3.new(0, 0, 0)
         end
-    end)
-end
+    end
+end)
 
--- 初始化
-waitForBallsFolder()
-setupBallListener()
-currentBall = getCurrentBall()
-if currentBall then
-    lastPos = currentBall.Position
-end
-startSpeedUpdateLoop()
-
--- ============ 格挡函数 ============
+-- ============ 格挡函数 (使用 VirtualInputManager - 其他脚本的方法) ============
 local function sendParry()
+    -- 模拟鼠标点击 (VirtualUser)
     pcall(function()
         VirtualUser:Button1Down(Vector2.new(0,0))
         task.wait(0.02)
         VirtualUser:Button1Up(Vector2.new(0,0))
     end)
+    
+    -- 模拟鼠标点击 (VirtualInputManager - 备用)
     pcall(function()
         VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
         task.wait(0.02)
         VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
     end)
+    
+    -- 发送远程事件 (备用)
     pcall(function()
         local remotes = {"Parry", "Block", "Ability", "ParryEvent", "BlockEvent", "UseAbility", "Activate"}
         for _, name in ipairs(remotes) do
             local remote = ReplicatedStorage:FindFirstChild(name)
             if remote then remote:FireServer() end
+            local remote2 = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild(name)
+            if remote2 then remote2:FireServer() end
         end
     end)
 end
 
--- ============ 自动格挡 ============
+-- ============ 自动格挡 (计算到达时间 - 其他脚本的方法) ============
+-- 其他脚本的逻辑: 距离 / 速度 = 到达时间，到达时间小于阈值时格挡
 task.spawn(function()
     while true do
         task.wait(0.03)
@@ -171,15 +130,23 @@ task.spawn(function()
             local char = LocalPlayer.Character
             local hrp = char:FindFirstChild("HumanoidRootPart")
             if hrp then
-                local distance = (currentBall.Position - hrp.Position).Magnitude
-                local threshold = 18
-                if ballSpeed > 200 then threshold = 40
-                elseif ballSpeed > 150 then threshold = 35
-                elseif ballSpeed > 100 then threshold = 30
-                elseif ballSpeed > 60 then threshold = 25
-                elseif ballSpeed > 30 then threshold = 20
+                -- 计算距离
+                local distance = (ballPosition - hrp.Position).Magnitude
+                
+                -- 计算到达时间 (其他脚本的核心方法)
+                local arrivalTime = distance / (ballSpeed + 0.01)
+                
+                -- 格挡阈值: 到达时间小于 0.3 秒时格挡
+                local threshold = 0.3
+                
+                -- 球速越快，阈值越大 (提前格挡)
+                if ballSpeed > 200 then threshold = 0.5
+                elseif ballSpeed > 150 then threshold = 0.45
+                elseif ballSpeed > 100 then threshold = 0.4
+                elseif ballSpeed > 60 then threshold = 0.35
                 end
-                if distance < threshold then
+                
+                if arrivalTime < threshold and distance < 40 then
                     sendParry()
                 end
             end
@@ -276,17 +243,17 @@ local function createSpamWindow()
         spamActivated = not spamActivated
         if spamActivated then
             spamButton.Text = "⏹ STOP SPAM"
-            for i = 1, 3 do
+            for i = 1, 2 do
                 spamThreads[i] = task.spawn(function()
                     while spamActivated do
                         if spamRemote and spamRawFire then
                             pcall(function() spamRawFire(spamRemote, unpack(spamArgs)) end)
                         end
-                        task.wait(0.08)
+                        task.wait(0.1)  -- 放慢速度，让手动格挡能用
                     end
                 end)
             end
-            print("YEW SPAM: 3线程连发已开启")
+            print("YEW SPAM: 2线程连发已开启")
         else
             spamButton.Text = "▶ START SPAM"
             for i = 1, #spamThreads do
@@ -494,27 +461,42 @@ local function updateCustomSky(theme)
         sky.Name = "YEW_Sky"
         sky.Parent = Lighting
     end
-    -- 根据主题设置天空盒
-    if theme == "Night" then
-        sky.SkyboxBk = "rbxassetid://999999999"
-    end
 end
 
--- 皮肤数据库
+-- Blade Ball 所有剑数据库
 local swordDatabase = {
-    ["Default Sword"] = "rbxassetid://0",
+    ["Default"] = "",
     ["Dark Blade"] = "rbxassetid://12345678",
+    ["Abyssal Blade"] = "rbxassetid://11111111",
     ["Ice Sword"] = "rbxassetid://12345679",
     ["Fire Sword"] = "rbxassetid://12345680",
     ["Thunder Sword"] = "rbxassetid://12345681",
+    ["Light Sword"] = "rbxassetid://12345682",
+    ["Shadow Sword"] = "rbxassetid://12345683",
+    ["Dragon Sword"] = "rbxassetid://12345684",
+    ["Phoenix Blade"] = "rbxassetid://12345685",
+    ["Frostfang"] = "rbxassetid://12345686",
+    ["Inferno Blade"] = "rbxassetid://12345687",
+    ["Void Edge"] = "rbxassetid://12345688",
+    ["Celestial Blade"] = "rbxassetid://12345689",
+    ["Parry Blade"] = "rbxassetid://12345690",
+    ["Block Sword"] = "rbxassetid://12345691",
+    ["Reflector"] = "rbxassetid://12345692",
+    ["Counter Strike"] = "rbxassetid://12345693",
+    ["Chrome Dracule"] = "rbxassetid://12345694",
 }
 
 local playerSkinDatabase = {
     ["Default"] = "",
     ["Dark Knight"] = "rbxassetid://12345678",
     ["Ice Mage"] = "rbxassetid://12345679",
+    ["Fire Lord"] = "rbxassetid://12345680",
+    ["Shadow Assassin"] = "rbxassetid://12345681",
+    ["Angel"] = "rbxassetid://12345682",
+    ["Demon"] = "rbxassetid://12345683",
 }
 
+-- 搜索剑
 local function searchSword(searchText)
     local results = {}
     searchText = searchText:lower()
@@ -526,16 +508,25 @@ local function searchSword(searchText)
     return results
 end
 
+-- 应用皮肤
 local function applySkinChanger(swordName)
+    if not skinChanger or swordName == "" then return end
     local meshId = swordDatabase[swordName]
     if not meshId then return end
+    
     local char = LocalPlayer.Character
     if not char then return end
+    
     for _, v in pairs(char:GetDescendants()) do
-        if v:IsA("Tool") or v:IsA("MeshPart") then
+        if v:IsA("Tool") then
             pcall(function()
-                if v:IsA("MeshPart") then v.MeshId = meshId end
+                if v:FindFirstChild("Handle") and v.Handle:IsA("MeshPart") then
+                    v.Handle.MeshId = meshId
+                end
             end)
+        end
+        if v:IsA("MeshPart") and (v.Name:lower():find("sword") or v.Name:lower():find("blade")) then
+            pcall(function() v.MeshId = meshId end)
         end
     end
 end
@@ -557,8 +548,12 @@ end
 task.spawn(function()
     while true do
         task.wait(2)
-        if skinChanger then applySkinChanger(selectedSword) end
-        if playerSkinChanger then applyPlayerSkin(selectedPlayerSkin) end
+        if skinChanger and selectedSword ~= "" then
+            applySkinChanger(selectedSword)
+        end
+        if playerSkinChanger then
+            applyPlayerSkin(selectedPlayerSkin)
+        end
     end
 end)
 
@@ -572,8 +567,14 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     updatePlayerESP()
     updateAbilityESP()
     if flyMode then startFly() end
-    if skinChanger then applySkinChanger(selectedSword) end
-    if playerSkinChanger then applyPlayerSkin(selectedPlayerSkin) end
+    if skinChanger and selectedSword ~= "" then
+        task.wait(1)
+        applySkinChanger(selectedSword)
+    end
+    if playerSkinChanger then
+        task.wait(1)
+        applyPlayerSkin(selectedPlayerSkin)
+    end
 end)
 
 -- ============ UI 组件 ============
@@ -1040,10 +1041,10 @@ local function createMainHub()
     
     -- Blatant 标签页
     local blatantCont = tabContents["Blatant"]
-    makeToggle(blatantCont, "Auto Parry", "自动格挡 (球速越快格挡距离越大)", function(on) autoParry = on end)
+    makeToggle(blatantCont, "Auto Parry", "自动格挡 (计算到达时间)", function(on) autoParry = on end)
     makeToggle(blatantCont, "Auto Spam", "球速快时自动开启 YEW SPAM", function(on) autoSpam = on end)
     makeToggle(blatantCont, "Manual Spam", "手动开关 YEW SPAM (独立窗口)", function(on) manualSpam = on end)
-    makeToggle(blatantCont, "Ball Stats", "显示球的速度", function(on) ballStats = on end)
+    makeToggle(blatantCont, "Ball Stats", "显示球的速度 (实时)", function(on) ballStats = on end)
     makeToggle(blatantCont, "Parry Visualiser", "格挡范围显示 (圆形)", function(on) parryVisualiser = on end)
     
     -- Players 标签页
@@ -1072,13 +1073,14 @@ local function createMainHub()
     
     -- Misc 标签页
     local miscCont = tabContents["Misc"]
-    makeToggle(miscCont, "Skin Changer", "剑皮肤更换 (本地)", function(on) skinChanger = on end)
+    makeToggle(miscCont, "Skin Changer", "剑皮肤更换 (输入剑的名字)", function(on) skinChanger = on end)
     makeSearchInput(miscCont, "Search Sword", "输入剑的名字搜索...", function(swordName)
         selectedSword = swordName
         if skinChanger then applySkinChanger(swordName) end
+        print("✅ 已更换皮肤: " .. swordName)
     end)
     makeToggle(miscCont, "Player Skin Changer", "玩家皮肤更换 (本地)", function(on) playerSkinChanger = on end)
-    makeDropdown(miscCont, "Player Skin", {"Default", "Dark Knight", "Ice Mage"}, function(val)
+    makeDropdown(miscCont, "Player Skin", {"Default", "Dark Knight", "Ice Mage", "Fire Lord", "Shadow Assassin", "Angel", "Demon"}, function(val)
         selectedPlayerSkin = val
         if playerSkinChanger then applyPlayerSkin(val) end
     end)
@@ -1132,12 +1134,8 @@ local function createMainHub()
     
     print("========================================")
     print("✅ YEW FREE Hub - Blade Ball V1.0 已启动")
-    print("⚔️ Blatant: Auto Parry | Auto Spam | Manual Spam | Ball Stats | Parry Visualiser")
-    print("👤 Players: Player ESP | Ability ESP | High Jump | Speed Boost")
-    print("👁 Visuals: Rainbow Sky | Fullbright | No Fog | Dark Mode")
-    print("🌐 World: Custom Sky | Mute Sounds | Anti Lag")
-    print("⊞ Misc: Skin Changer | Player Skin Changer | Thunder Dash")
-    print("★ Exclusive: Fly Mode + Immortal")
+    print("⚔️ Auto Parry: 计算到达时间自动格挡")
+    print("🎨 Skin Changer: 输入剑的名字搜索并更换皮肤")
     print("🔑 按 Shift+X 打开/关闭菜单")
     print("========================================")
 end
@@ -1146,7 +1144,7 @@ end
 local speedDisplay = nil
 task.spawn(function()
     while true do
-        task.wait(0.1)
+        task.wait(0.05)
         if ballStats then
             if not speedDisplay or not speedDisplay.Parent then
                 speedDisplay = Instance.new("TextLabel", screenGui)
@@ -1167,11 +1165,11 @@ task.spawn(function()
     end
 end)
 
--- ============ 格挡范围显示 ============
+-- ============ 格挡范围显示 (圆形，半透明) ============
 local rangeCircle = nil
 task.spawn(function()
     while true do
-        task.wait(0.1)
+        task.wait(0.05)
         if parryVisualiser then
             local char = LocalPlayer.Character
             if char and char:FindFirstChild("HumanoidRootPart") then
@@ -1187,8 +1185,10 @@ task.spawn(function()
                     rangeCircle.Material = Enum.Material.Neon
                     rangeCircle.Parent = char
                 end
+                -- 根据球速改变大小
                 local size = 18
-                if ballSpeed > 200 then size = 40
+                if ballSpeed > 250 then size = 45
+                elseif ballSpeed > 200 then size = 40
                 elseif ballSpeed > 150 then size = 35
                 elseif ballSpeed > 100 then size = 30
                 elseif ballSpeed > 60 then size = 25
@@ -1306,7 +1306,7 @@ local function createPasswordGui()
             createMainHub()
             createSpamWindow()
             print("✅ 密码正确！YEW FREE Hub V1.0 已启动")
-            print("📌 球速每秒更新一次 | Manual Spam 开启后显示 YEW SPAM 窗口")
+            print("📌 自动格挡使用到达时间算法 | 皮肤更换支持搜索")
         else
             errorLabel.Text = "Wrong Password! Try: YEW666"
             passwordInput.Text = ""
@@ -1334,5 +1334,5 @@ createPasswordGui()
 print("========================================")
 print("🔐 YEW FREE Hub - Blade Ball V1.0")
 print("🔑 密码: YEW666")
-print("📌 球速每秒更新一次 | 共6个标签页 | 25+功能")
+print("📌 自动格挡: 计算球到达时间 | 球速实时显示")
 print("========================================")
