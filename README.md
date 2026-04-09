@@ -1,5 +1,6 @@
--- YEW FREE Hub - Blade Ball V1.1
--- 密码: 018828772928392 | 完整修复版
+-- YEW FREE Hub - Blade Ball V1.21
+-- Password: 018828772928392
+-- 自动格挡优化 | 球速实时检测 | 手机/PC自适应
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
@@ -12,15 +13,14 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local CoreGui = game:GetService("CoreGui")
 local Workspace = game:GetService("Workspace")
 local Camera = Workspace.CurrentCamera
-local Clipboard = game:GetService("Clipboard")
 
 repeat task.wait() until LocalPlayer and LocalPlayer.Character
 
--- ============ 检测设备类型 ============
+-- ============ Device Detection ============
 local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
-print(isMobile and "📱 手机模式已启用" or "💻 电脑模式已启用")
+print(isMobile and "📱 Mobile Mode" or "💻 PC Mode")
 
--- ============ 创建主 GUI ============
+-- ============ Create Main GUI ============
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "YEW_Free_Hub"
 screenGui.ResetOnSpawn = false
@@ -31,19 +31,13 @@ end
 
 local guiScale = isMobile and 0.8 or 1
 
--- ============ 等待 Balls 文件夹 ============
-local BallsFolder = nil
-while not BallsFolder do
-    BallsFolder = Workspace:FindFirstChild("Balls")
-    if not BallsFolder then
-        task.wait(0.1)
-    end
-end
+-- ============ Wait for Balls Folder ============
+local Balls = workspace:WaitForChild("Balls", 9e9)
 print("✅ Balls folder found")
 
--- ============ 验证球是否有效 ============
+-- ============ Verify Ball ============
 local function VerifyBall(Ball)
-    if typeof(Ball) == "Instance" and Ball:IsA("BasePart") and Ball:IsDescendantOf(BallsFolder) then
+    if typeof(Ball) == "Instance" and Ball:IsA("BasePart") and Ball:IsDescendantOf(Balls) then
         if Ball:GetAttribute("realBall") == true then
             return true
         end
@@ -51,7 +45,12 @@ local function VerifyBall(Ball)
     return false
 end
 
--- ============ 全局变量 ============
+-- ============ Check if Targeted ============
+local function IsTarget()
+    return (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Highlight"))
+end
+
+-- ============ Variables ============
 local autoParry = false
 local autoSpam = false
 local manualSpam = false
@@ -84,15 +83,13 @@ local selectedPlayerSkin = "Default"
 local flyBodyVelocity = nil
 local flyBodyGyro = nil
 
--- ============ 球体检测 ============
+-- ============ Ball Speed Detection ============
 local currentBall = nil
-local ballSpeed = 0
-local ballPosition = Vector3.new(0, 0, 0)
-local lastPos = nil
-local lastTime = tick()
+local currentBallSpeed = 0
+local maxBallSpeed = 0
 
 local function findRealBall()
-    for _, ball in pairs(BallsFolder:GetChildren()) do
+    for _, ball in pairs(Balls:GetChildren()) do
         if VerifyBall(ball) then
             return ball
         end
@@ -102,45 +99,33 @@ end
 
 currentBall = findRealBall()
 
--- 球速每秒更新一次
+-- 实时球速检测 (每帧更新)
 task.spawn(function()
     while true do
-        task.wait(1)
+        task.wait(0.05)
         if currentBall and currentBall.Parent then
-            local currentPos = currentBall.Position
-            local currentTime = tick()
-            if lastPos then
-                local distance = (currentPos - lastPos).Magnitude
-                local timeDiff = currentTime - lastTime
-                if timeDiff > 0 then
-                    ballSpeed = distance / timeDiff
+            if currentBall.AssemblyLinearVelocity then
+                currentBallSpeed = currentBall.AssemblyLinearVelocity.Magnitude
+                if currentBallSpeed > maxBallSpeed then
+                    maxBallSpeed = currentBallSpeed
                 end
             end
-            lastPos = currentPos
-            lastTime = currentTime
-            ballPosition = currentPos
         else
             currentBall = findRealBall()
-            if currentBall then
-                lastPos = currentBall.Position
-                lastTime = tick()
-            end
-            ballSpeed = 0
+            currentBallSpeed = 0
         end
     end
 end)
 
 -- 监听新球出现
-BallsFolder.ChildAdded:Connect(function(Ball)
+Balls.ChildAdded:Connect(function(Ball)
     if VerifyBall(Ball) then
         currentBall = Ball
-        lastPos = Ball.Position
-        lastTime = tick()
         print("✅ Real ball detected!")
     end
 end)
 
--- ============ 获取附近玩家数量 ============
+-- ============ Get Nearby Players ============
 local function getNearbyPlayerCount()
     local count = 0
     local char = LocalPlayer.Character
@@ -156,20 +141,23 @@ local function getNearbyPlayerCount()
     return count
 end
 
--- ============ 检查是否被瞄准 ============
-local function IsTarget()
-    local char = LocalPlayer.Character
-    if not char then return false end
-    return char:FindFirstChild("Highlight") ~= nil
-end
-
--- ============ 格挡函数 ============
+-- ============ Parry Function ============
 local function sendParry()
-    pcall(function()
-        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-        task.wait(0.02)
-        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-    end)
+    if isMobile then
+        pcall(function()
+            local vu = game:GetService("VirtualUser")
+            vu:Button1Down(Vector2.new(0,0))
+            task.wait(0.02)
+            vu:Button1Up(Vector2.new(0,0))
+        end)
+    else
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+            task.wait(0.02)
+            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+        end)
+    end
+    
     pcall(function()
         local remotes = {"Parry", "Block", "Ability", "ParryEvent", "BlockEvent", "UseAbility", "Activate"}
         for _, name in ipairs(remotes) do
@@ -179,63 +167,88 @@ local function sendParry()
     end)
 end
 
--- ============ 自动格挡 (监听球的位置变化) ============
+-- ============ Auto Parry (到达时间预测 + 球速分级) ============
 local parryConnections = {}
 
 local function setupParryForBall(Ball)
     if parryConnections[Ball] then return end
     
-    local OldPosition = Ball.Position
-    local OldTick = tick()
-    
-    local connection = Ball:GetPropertyChangedSignal("Position"):Connect(function()
-        if autoParry and IsTarget() then
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local distance = (Ball.Position - hrp.Position).Magnitude
-                local velocity = (OldPosition - Ball.Position).Magnitude
-                
-                if velocity > 0 then
-                    local arrivalTime = distance / velocity
-                    local threshold = 10
-                    
-                    if ballSpeed > 150 then
-                        threshold = 8
-                    elseif ballSpeed > 80 then
-                        threshold = 9
-                    end
-                    
-                    if arrivalTime <= threshold then
-                        sendParry()
-                    end
-                end
-            end
-        end
+    local connection = RunService.Heartbeat:Connect(function()
+        if not autoParry then return end
+        if not IsTarget() then return end
         
-        if (tick() - OldTick >= 1/60) then
-            OldTick = tick()
-            OldPosition = Ball.Position
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        
+        local distance = (Ball.Position - hrp.Position).Magnitude
+        local speed = currentBallSpeed
+        
+        if speed > 0 then
+            -- 到达时间 = 距离 / 速度
+            local timeToImpact = distance / speed
+            
+            -- 动态阈值：球速越快，阈值越小（更快反应）
+            local threshold = 0.4
+            if speed > 250 then
+                threshold = 0.2
+            elseif speed > 200 then
+                threshold = 0.25
+            elseif speed > 150 then
+                threshold = 0.3
+            elseif speed > 100 then
+                threshold = 0.35
+            elseif speed > 60 then
+                threshold = 0.38
+            end
+            
+            -- 格挡距离限制 (避免太远就格挡)
+            if distance < 45 and timeToImpact <= threshold then
+                sendParry()
+            end
         end
     end)
     
     parryConnections[Ball] = connection
 end
 
--- 为现有球设置监听
-for _, ball in pairs(BallsFolder:GetChildren()) do
+-- Setup for existing balls
+for _, ball in pairs(Balls:GetChildren()) do
     if VerifyBall(ball) then
         setupParryForBall(ball)
     end
 end
 
-BallsFolder.ChildAdded:Connect(function(Ball)
+Balls.ChildAdded:Connect(function(Ball)
     if VerifyBall(Ball) then
         setupParryForBall(Ball)
     end
 end)
 
--- ============ YEW SPAM 发包函数 ============
+-- ============ Auto Spam (自动连点) ============
+local autoSpamActive = false
+local autoSpamThread = nil
+
+local function startAutoSpam()
+    if autoSpamThread then return end
+    autoSpamActive = true
+    autoSpamThread = task.spawn(function()
+        while autoSpamActive do
+            sendParry()
+            task.wait(0.05)
+        end
+    end)
+end
+
+local function stopAutoSpam()
+    autoSpamActive = false
+    if autoSpamThread then
+        task.cancel(autoSpamThread)
+        autoSpamThread = nil
+    end
+end
+
+-- ============ YEW SPAM Functions ============
 local spamRemote = nil
 local spamRawFire = nil
 local spamArgs = {}
@@ -258,7 +271,7 @@ local function hookParryPacket()
                     spamRemote = obj
                     spamRawFire = obj.FireServer
                     spamArgs = args
-                    print("YEW SPAM: 成功钩住格挡包！")
+                    print("YEW SPAM: Packet hooked!")
                     spamHooked = true
                 end
                 return oldIndex(self, key)(obj, ...)
@@ -275,37 +288,7 @@ local function sendSpamPacket()
     end
 end
 
--- Auto Spam: 球速快时自动启动 YEW SPAM 连发
-task.spawn(function()
-    while true do
-        task.wait(0.3)
-        if autoSpam then
-            local shouldActivate = ballSpeed > 100 or getNearbyPlayerCount() >= 2
-            if shouldActivate and not spamPacketActivated then
-                if not spamHooked then
-                    hookParryPacket()
-                end
-                spamPacketActivated = true
-                spamPacketThread = task.spawn(function()
-                    while spamPacketActivated do
-                        sendSpamPacket()
-                        task.wait(0.05)
-                    end
-                end)
-                print("Auto Spam: 球速 " .. math.floor(ballSpeed) .. "，自动启动 YEW SPAM")
-            elseif not shouldActivate and spamPacketActivated then
-                spamPacketActivated = false
-                if spamPacketThread then
-                    task.cancel(spamPacketThread)
-                    spamPacketThread = nil
-                end
-                print("Auto Spam: 条件不满足，自动停止 YEW SPAM")
-            end
-        end
-    end
-end)
-
--- ============ Manual Spam: YEW SPAM 独立窗口 ============
+-- ============ Manual Spam Window ============
 local spamGui, spamFrame, spamButton, spamStroke
 local spamManualActivated = false
 local spamManualThread = nil
@@ -336,7 +319,7 @@ local function createSpamWindow()
     spamStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     
     spamButton = Instance.new("TextButton", spamFrame)
-    spamButton.Text = "YEW: 等待抓包"
+    spamButton.Text = "YEW: Waiting for packet"
     spamButton.Size = UDim2.new(1, -20, 1, -20)
     spamButton.Position = UDim2.new(0, 10, 0, 10)
     spamButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
@@ -344,10 +327,10 @@ local function createSpamWindow()
     spamButton.BorderSizePixel = 0
     spamButton.Font = Enum.Font.SourceSansBold
     spamButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    spamButton.TextSize = 14
+    spamButton.TextSize = 12
     Instance.new("UICorner", spamButton).CornerRadius = UDim.new(0, 8)
     
-    -- 彩虹边框
+    -- Rainbow border
     task.spawn(function()
         local h = 0
         while spamFrame and spamFrame.Parent do
@@ -373,22 +356,22 @@ local function createSpamWindow()
             spamManualThread = task.spawn(function()
                 while spamManualActivated do
                     sendSpamPacket()
-                    task.wait(0.05)
+                    task.wait(0.08)
                 end
             end)
-            print("Manual SPAM: 已开启")
+            print("Manual SPAM: Started")
         else
             spamButton.Text = "▶ START SPAM"
             if spamManualThread then
                 task.cancel(spamManualThread)
                 spamManualThread = nil
             end
-            print("Manual SPAM: 已关闭")
+            print("Manual SPAM: Stopped")
         end
     end)
 end
 
--- Manual Spam 控制窗口显示
+-- Manual Spam controls window visibility
 task.spawn(function()
     while true do
         task.wait(0.1)
@@ -398,7 +381,7 @@ task.spawn(function()
     end
 end)
 
--- ============ 飞行模式 ============
+-- ============ Fly Mode ============
 local function startFly()
     local char = LocalPlayer.Character
     if not char then return end
@@ -443,7 +426,7 @@ local function stopFly()
     if flyBodyGyro then flyBodyGyro:Destroy() end
 end
 
--- ============ 更新函数 ============
+-- ============ Update Functions ============
 local function updateSpeed()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("Humanoid") then
@@ -538,7 +521,7 @@ local function updateMute()
     pcall(function() game:GetService("SoundService").MasterVolume = muteSounds and 0 or volumeLevel end)
 end
 
--- 彩虹天空
+-- Rainbow Sky
 task.spawn(function()
     while true do
         task.wait(0.05)
@@ -549,7 +532,7 @@ task.spawn(function()
     end
 end)
 
--- 自定义天空
+-- Custom Sky
 local function updateCustomSky(theme)
     if not customSky then
         local sky = Lighting:FindFirstChild("YEW_Sky")
@@ -564,7 +547,7 @@ local function updateCustomSky(theme)
     end
 end
 
--- 皮肤更换
+-- Skin Changer
 local function changeSwordSkin(skinName)
     local char = LocalPlayer.Character
     if not char then return end
@@ -580,7 +563,7 @@ local function changeSwordSkin(skinName)
     end
 end
 
--- 玩家皮肤更换
+-- Player Skin Database
 local playerSkinDatabase = {
     ["Default"] = "",
     ["Dark Knight"] = "rbxassetid://12345678",
@@ -601,7 +584,7 @@ local function applyPlayerSkin(skinName)
     end
 end
 
--- 角色重生
+-- Character Respawn
 LocalPlayer.CharacterAdded:Connect(function(char)
     task.wait(0.5)
     updateSpeed()
@@ -621,7 +604,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     end
 end)
 
--- ============ UI 组件 ============
+-- ============ UI Components ============
 local function makeToggle(parent, title, desc, onChange)
     local card = Instance.new("Frame", parent)
     card.Size = UDim2.new(1, 0, 0, 75)
@@ -838,7 +821,7 @@ local function makeInput(parent, title, placeholder, onChange)
     return card
 end
 
--- ============ 创建主界面 ============
+-- ============ Create Main Interface ============
 local mainFrame = nil
 local openBtn = nil
 
@@ -854,7 +837,7 @@ local function createMainHub()
     mainStroke.Color = Color3.fromRGB(0, 195, 255)
     mainStroke.Thickness = 1
     
-    -- 拖动
+    -- Dragging
     local dragging = false
     local dragStart, startPos
     mainFrame.InputBegan:Connect(function(input)
@@ -876,7 +859,7 @@ local function createMainHub()
         end
     end)
     
-    -- 头部
+    -- Header
     local header = Instance.new("Frame", mainFrame)
     header.Size = UDim2.new(1, 0, 0, 70)
     header.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
@@ -911,7 +894,7 @@ local function createMainHub()
     verLabel.Size = UDim2.new(0, 55, 0, 22)
     verLabel.Position = UDim2.new(0, 70, 0, 44)
     verLabel.BackgroundTransparency = 1
-    verLabel.Text = "V1.1"
+    verLabel.Text = "V1.21"
     verLabel.TextColor3 = Color3.fromRGB(0, 195, 255)
     verLabel.TextSize = 12
     verLabel.Font = Enum.Font.GothamBold
@@ -927,14 +910,14 @@ local function createMainHub()
     closeBtn.BorderSizePixel = 0
     Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
     
-    -- 侧边栏
+    -- Sidebar
     local sidebar = Instance.new("Frame", mainFrame)
     sidebar.Size = UDim2.new(0, 150, 1, -71)
     sidebar.Position = UDim2.new(0, 0, 0, 71)
     sidebar.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     sidebar.BorderSizePixel = 0
     
-    -- 内容区域
+    -- Content area
     local contentFrame = Instance.new("Frame", mainFrame)
     contentFrame.Size = UDim2.new(1, -166, 1, -71)
     contentFrame.Position = UDim2.new(0, 158, 0, 75)
@@ -952,7 +935,7 @@ local function createMainHub()
         scrollFrame.CanvasSize = UDim2.new(0, 0, 0, contentLayout.AbsoluteContentSize.Y + 16)
     end)
     
-    -- 标签页
+    -- Tabs
     local tabs = {"Blatant", "Players", "Visuals", "World", "Misc", "Exclusive"}
     local icons = {"⚔", "👤", "👁", "🌐", "⊞", "★"}
     local currentTab = "Blatant"
@@ -1004,17 +987,20 @@ local function createMainHub()
         btn.MouseButton1Click:Connect(function() switchTab(name) end)
     end
     
-    -- ============ 创建所有功能 ============
+    -- ============ Create All Features ============
     
-    -- Blatant 标签页
+    -- Blatant Tab
     local blatantCont = tabContents["Blatant"]
-    makeToggle(blatantCont, "Auto Parry", "自动格挡 (后台运行，监听球位置)", function(on) autoParry = on end)
-    makeToggle(blatantCont, "Auto Spam", "球速快时自动启动 YEW SPAM", function(on) autoSpam = on end)
-    makeToggle(blatantCont, "Manual Spam", "手动开关 YEW SPAM (独立窗口)", function(on) manualSpam = on end)
-    makeToggle(blatantCont, "Ball Stats", "显示球的速度", function(on) ballStats = on end)
+    makeToggle(blatantCont, "Auto Parry", "Auto Parry (到达时间预测 + 球速分级)", function(on) autoParry = on end)
+    makeToggle(blatantCont, "Auto Spam", "Auto Spam (自动连点)", function(on) 
+        autoSpam = on
+        if on then startAutoSpam() else stopAutoSpam() end
+    end)
+    makeToggle(blatantCont, "Manual Spam", "Manual YEW SPAM (独立窗口)", function(on) manualSpam = on end)
+    makeToggle(blatantCont, "Ball Stats", "显示球速 (Current | Max)", function(on) ballStats = on end)
     makeToggle(blatantCont, "Parry Visualiser", "格挡范围显示 (圆形)", function(on) parryVisualiser = on end)
     
-    -- Players 标签页
+    -- Players Tab
     local playersCont = tabContents["Players"]
     makeToggle(playersCont, "Player ESP", "玩家透视", function(on) playerESP = on; updatePlayerESP() end)
     makeToggle(playersCont, "Ability ESP", "技能ESP", function(on) abilityESP = on; updateAbilityESP() end)
@@ -1023,14 +1009,14 @@ local function createMainHub()
     makeToggle(playersCont, "Speed Boost", "速度提升", function(on) speedBoost = on; updateSpeed() end)
     makeSlider(playersCont, "Walk Speed", 16, 120, 50, function(val) currentSpeed = val; updateSpeed() end)
     
-    -- Visuals 标签页
+    -- Visuals Tab
     local visualsCont = tabContents["Visuals"]
     makeToggle(visualsCont, "Rainbow Sky", "彩虹天空", function(on) rainbowSky = on end)
     makeToggle(visualsCont, "Fullbright", "全亮", function(on) fullbright = on; updateFullbright() end)
     makeToggle(visualsCont, "No Fog", "去除雾气", function(on) noFog = on; updateNoFog() end)
     makeToggle(visualsCont, "Dark Mode", "暗黑模式", function(on) darkMode = on; updateFullbright() end)
     
-    -- World 标签页
+    -- World Tab
     local worldCont = tabContents["World"]
     makeToggle(worldCont, "Custom Sky", "自定义天空", function(on) customSky = on; updateCustomSky(selectedTheme) end)
     makeDropdown(worldCont, "Sky Theme", {"Default", "Night", "Sunset", "Rainbow"}, function(val) selectedTheme = val; updateCustomSky(val) end)
@@ -1038,13 +1024,13 @@ local function createMainHub()
     makeSlider(worldCont, "Volume Level", 0, 10, 1, function(val) volumeLevel = val; updateMute() end)
     makeToggle(worldCont, "Anti Lag", "减少卡顿", function(on) antiLag = on; updateAntiLag() end)
     
-    -- Misc 标签页
+    -- Misc Tab
     local miscCont = tabContents["Misc"]
-    makeToggle(miscCont, "Skin Changer", "剑皮肤更换 (输入剑的Mesh ID)", function(on) skinChanger = on end)
+    makeToggle(miscCont, "Skin Changer", "剑皮肤更换 (输入 Mesh ID)", function(on) skinChanger = on end)
     makeInput(miscCont, "Sword ID", "输入剑的 Mesh ID...", function(val)
         selectedSword = val
         if skinChanger then changeSwordSkin(val) end
-        print("✅ 已更换皮肤: " .. val)
+        print("✅ 皮肤已更换: " .. val)
     end)
     makeToggle(miscCont, "Player Skin Changer", "玩家皮肤更换", function(on) playerSkinChanger = on end)
     makeDropdown(miscCont, "Player Skin", {"Default", "Dark Knight", "Ice Mage", "Fire Lord"}, function(val)
@@ -1053,16 +1039,16 @@ local function createMainHub()
     end)
     makeToggle(miscCont, "Thunder Dash", "雷霆冲刺", function(on) thunderDash = on; updateThunderDash() end)
     
-    -- Exclusive 标签页
+    -- Exclusive Tab
     local exclusiveCont = tabContents["Exclusive"]
-    makeToggle(exclusiveCont, "Fly Mode", "飞行模式 + 无敌", function(on)
+    makeToggle(exclusiveCont, "Fly Mode", "飞行模式 + 无敌 (WASD + Space)", function(on)
         flyMode = on
         immortal = on
         if on then startFly() else stopFly() end
         updateImmortal()
     end)
     
-    -- 打开/关闭按钮
+    -- Open/Close Button
     openBtn = Instance.new("TextButton", screenGui)
     openBtn.Size = UDim2.new(0, 60, 0, 60)
     openBtn.Position = UDim2.new(1, -75, 1, -85)
@@ -1086,7 +1072,7 @@ local function createMainHub()
         openBtn.Visible = true
     end)
     
-    -- 快捷键 Shift+X
+    -- Shortcut Shift+X
     UserInputService.InputBegan:Connect(function(input, gp)
         if gp then return end
         if input.KeyCode == Enum.KeyCode.X and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
@@ -1100,31 +1086,31 @@ local function createMainHub()
     switchTab("Blatant")
     
     print("========================================")
-    print("✅ YEW FREE Hub - Blade Ball V1.1 已启动")
-    print(isMobile and "📱 手机模式" or "💻 电脑模式")
-    print("⚔️ Auto Parry: 后台运行，监听球位置")
-    print("🔑 按 Shift+X 打开/关闭菜单")
+    print("✅ YEW FREE Hub - Blade Ball V1.21 Started")
+    print(isMobile and "📱 Mobile mode (Touch Optimized)" or "💻 PC mode (Mouse/Keyboard)")
+    print("⚔️ Auto Parry: 到达时间预测 + 球速分级")
+    print("🔑 Press Shift+X to open/close menu")
     print("========================================")
 end
 
--- ============ 球速显示 ============
+-- ============ Ball Speed Display ============
 local speedDisplay = nil
 task.spawn(function()
     while true do
-        task.wait(1)
+        task.wait(0.05)
         if ballStats then
             if not speedDisplay or not speedDisplay.Parent then
                 speedDisplay = Instance.new("TextLabel", screenGui)
-                speedDisplay.Size = UDim2.new(0, 200, 0, 40)
-                speedDisplay.Position = UDim2.new(0.5, -100, 0, 10)
+                speedDisplay.Size = UDim2.new(0, 240, 0, 50)
+                speedDisplay.Position = UDim2.new(0.5, -120, 0, 10)
                 speedDisplay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
                 speedDisplay.BackgroundTransparency = 0.5
                 speedDisplay.TextColor3 = Color3.fromRGB(0, 195, 255)
-                speedDisplay.TextSize = 18
+                speedDisplay.TextSize = 16
                 speedDisplay.Font = Enum.Font.GothamBold
                 Instance.new("UICorner", speedDisplay).CornerRadius = UDim.new(0, 8)
             end
-            speedDisplay.Text = "⚡ Ball Speed: " .. math.floor(ballSpeed)
+            speedDisplay.Text = "⚡ Current: " .. math.floor(currentBallSpeed) .. "  |  Max: " .. math.floor(maxBallSpeed)
             speedDisplay.Visible = true
         else
             if speedDisplay then speedDisplay.Visible = false end
@@ -1132,7 +1118,7 @@ task.spawn(function()
     end
 end)
 
--- ============ 格挡范围显示 ============
+-- ============ Parry Range Display ============
 local rangeCircle = nil
 RunService.RenderStepped:Connect(function()
     if parryVisualiser then
@@ -1152,12 +1138,12 @@ RunService.RenderStepped:Connect(function()
                 rangeCircle.Parent = char
             end
             local size = 18
-            if ballSpeed > 250 then size = 50
-            elseif ballSpeed > 200 then size = 45
-            elseif ballSpeed > 150 then size = 40
-            elseif ballSpeed > 100 then size = 35
-            elseif ballSpeed > 60 then size = 30
-            elseif ballSpeed > 30 then size = 25
+            if currentBallSpeed > 250 then size = 50
+            elseif currentBallSpeed > 200 then size = 45
+            elseif currentBallSpeed > 150 then size = 40
+            elseif currentBallSpeed > 100 then size = 35
+            elseif currentBallSpeed > 60 then size = 30
+            elseif currentBallSpeed > 30 then size = 25
             end
             rangeCircle.Size = Vector3.new(size, size, size)
             rangeCircle.CFrame = CFrame.new(hrp.Position)
@@ -1168,7 +1154,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ============ 密码界面 ============
+-- ============ Password GUI ============
 local function createPasswordGui()
     local passwordScreenGui = Instance.new("ScreenGui")
     passwordScreenGui.Name = "YEW_Password"
@@ -1265,7 +1251,7 @@ local function createPasswordGui()
     submitBtn.BorderSizePixel = 0
     Instance.new("UICorner", submitBtn).CornerRadius = UDim.new(0, 12)
     
-    -- Discord 按钮
+    -- Discord Button
     local discordBtn = Instance.new("TextButton", panel)
     discordBtn.Size = UDim2.new(0, 200, 0, 35)
     discordBtn.Position = UDim2.new(0.5, -100, 0, 305)
@@ -1280,25 +1266,29 @@ local function createPasswordGui()
     local discordLink = "https://discord.gg/kfeMqHhaR"
     
     discordBtn.MouseButton1Click:Connect(function()
-        pcall(function()
-            Clipboard:set(discordLink)
+        local copied = false
+        pcall(function() setclipboard(discordLink); copied = true end)
+        if not copied then
+            pcall(function() Clipboard:set(discordLink); copied = true end)
+        end
+        if not copied then
+            pcall(function() toclipboard(discordLink); copied = true end)
+        end
+        if copied then
             errorLabel.Text = "✅ Discord link copied!"
             errorLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
             task.wait(2)
             errorLabel.Text = ""
-        end)
+        end
     end)
     
     local function checkPassword()
         if passwordInput.Text == "018828772928392" then
-            -- 完全销毁密码界面
             passwordScreenGui:Destroy()
-            -- 创建主菜单
             createMainHub()
             createSpamWindow()
-            print("✅ 密码正确！YEW FREE Hub V1.1 已启动")
+            print("✅ Password correct! YEW FREE Hub V1.21 Started")
         else
-            -- 不暴露密码，只提示错误
             errorLabel.Text = "Invalid Password! Please try again."
             errorLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
             passwordInput.Text = ""
@@ -1320,11 +1310,11 @@ local function createPasswordGui()
     TweenService:Create(panel, TweenInfo.new(0.3, Enum.EasingStyle.Back), {BackgroundTransparency = 0}):Play()
 end
 
--- ============ 启动 ============
+-- ============ Start ============
 createPasswordGui()
 
 print("========================================")
-print("🔐 YEW FREE Hub - Blade Ball V1.1")
-print("🔑 新密码已设置")
+print("🔐 YEW FREE Hub - Blade Ball V1.21")
+print("🔑 Password: 018828772928392")
 print("💬 Discord: https://discord.gg/kfeMqHhaR")
 print("========================================")
