@@ -1,5 +1,5 @@
--- YEW FREE Hub - Blade Ball V1.0
--- 密码: YEW666 | 基于其他脚本正确逻辑重写
+-- YEW FREE Hub - Blade Ball V1.1
+-- 密码: 018828772928392 | 完整修复版
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
@@ -8,13 +8,17 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
-local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local CoreGui = game:GetService("CoreGui")
 local Workspace = game:GetService("Workspace")
 local Camera = Workspace.CurrentCamera
+local Clipboard = game:GetService("Clipboard")
 
 repeat task.wait() until LocalPlayer and LocalPlayer.Character
+
+-- ============ 检测设备类型 ============
+local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+print(isMobile and "📱 手机模式已启用" or "💻 电脑模式已启用")
 
 -- ============ 创建主 GUI ============
 local screenGui = Instance.new("ScreenGui")
@@ -23,6 +27,28 @@ screenGui.ResetOnSpawn = false
 pcall(function() screenGui.Parent = CoreGui end)
 if not screenGui.Parent then
     pcall(function() screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end)
+end
+
+local guiScale = isMobile and 0.8 or 1
+
+-- ============ 等待 Balls 文件夹 ============
+local BallsFolder = nil
+while not BallsFolder do
+    BallsFolder = Workspace:FindFirstChild("Balls")
+    if not BallsFolder then
+        task.wait(0.1)
+    end
+end
+print("✅ Balls folder found")
+
+-- ============ 验证球是否有效 ============
+local function VerifyBall(Ball)
+    if typeof(Ball) == "Instance" and Ball:IsA("BasePart") and Ball:IsDescendantOf(BallsFolder) then
+        if Ball:GetAttribute("realBall") == true then
+            return true
+        end
+    end
+    return false
 end
 
 -- ============ 全局变量 ============
@@ -58,108 +84,231 @@ local selectedPlayerSkin = "Default"
 local flyBodyVelocity = nil
 local flyBodyGyro = nil
 
--- ============ 球体检测 (其他脚本的正确方式) ============
+-- ============ 球体检测 ============
 local currentBall = nil
 local ballSpeed = 0
-local ballVelocity = Vector3.new(0, 0, 0)
 local ballPosition = Vector3.new(0, 0, 0)
+local lastPos = nil
+local lastTime = tick()
 
--- 实时检测球
+local function findRealBall()
+    for _, ball in pairs(BallsFolder:GetChildren()) do
+        if VerifyBall(ball) then
+            return ball
+        end
+    end
+    return nil
+end
+
+currentBall = findRealBall()
+
+-- 球速每秒更新一次
 task.spawn(function()
     while true do
-        task.wait(0.05)
-        -- 搜索球体
-        for _, v in pairs(Workspace:GetDescendants()) do
-            if v:IsA("BasePart") and (v.Name == "Ball" or v.Name:lower():find("ball")) then
-                if currentBall ~= v then
-                    currentBall = v
-                    print("✅ 球体已检测到: " .. v.Name)
-                end
-                break
-            end
-        end
-        
+        task.wait(1)
         if currentBall and currentBall.Parent then
-            -- 使用 AssemblyLinearVelocity 获取真实速度 (其他脚本的方法)
-            if currentBall.AssemblyLinearVelocity then
-                ballVelocity = currentBall.AssemblyLinearVelocity
-                ballSpeed = ballVelocity.Magnitude
+            local currentPos = currentBall.Position
+            local currentTime = tick()
+            if lastPos then
+                local distance = (currentPos - lastPos).Magnitude
+                local timeDiff = currentTime - lastTime
+                if timeDiff > 0 then
+                    ballSpeed = distance / timeDiff
+                end
             end
-            ballPosition = currentBall.Position
+            lastPos = currentPos
+            lastTime = currentTime
+            ballPosition = currentPos
         else
+            currentBall = findRealBall()
+            if currentBall then
+                lastPos = currentBall.Position
+                lastTime = tick()
+            end
             ballSpeed = 0
-            ballVelocity = Vector3.new(0, 0, 0)
         end
     end
 end)
 
--- ============ 格挡函数 (使用 VirtualInputManager - 其他脚本的方法) ============
+-- 监听新球出现
+BallsFolder.ChildAdded:Connect(function(Ball)
+    if VerifyBall(Ball) then
+        currentBall = Ball
+        lastPos = Ball.Position
+        lastTime = tick()
+        print("✅ Real ball detected!")
+    end
+end)
+
+-- ============ 获取附近玩家数量 ============
+local function getNearbyPlayerCount()
+    local count = 0
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return 0 end
+    local myPos = char.HumanoidRootPart.Position
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+            if (plr.Character.HumanoidRootPart.Position - myPos).Magnitude < 30 then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
+-- ============ 检查是否被瞄准 ============
+local function IsTarget()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    return char:FindFirstChild("Highlight") ~= nil
+end
+
+-- ============ 格挡函数 ============
 local function sendParry()
-    -- 模拟鼠标点击 (VirtualUser)
-    pcall(function()
-        VirtualUser:Button1Down(Vector2.new(0,0))
-        task.wait(0.02)
-        VirtualUser:Button1Up(Vector2.new(0,0))
-    end)
-    
-    -- 模拟鼠标点击 (VirtualInputManager - 备用)
     pcall(function()
         VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
         task.wait(0.02)
         VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
     end)
-    
-    -- 发送远程事件 (备用)
     pcall(function()
         local remotes = {"Parry", "Block", "Ability", "ParryEvent", "BlockEvent", "UseAbility", "Activate"}
         for _, name in ipairs(remotes) do
             local remote = ReplicatedStorage:FindFirstChild(name)
             if remote then remote:FireServer() end
-            local remote2 = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild(name)
-            if remote2 then remote2:FireServer() end
         end
     end)
 end
 
--- ============ 自动格挡 (计算到达时间 - 其他脚本的方法) ============
--- 其他脚本的逻辑: 距离 / 速度 = 到达时间，到达时间小于阈值时格挡
+-- ============ 自动格挡 (监听球的位置变化) ============
+local parryConnections = {}
+
+local function setupParryForBall(Ball)
+    if parryConnections[Ball] then return end
+    
+    local OldPosition = Ball.Position
+    local OldTick = tick()
+    
+    local connection = Ball:GetPropertyChangedSignal("Position"):Connect(function()
+        if autoParry and IsTarget() then
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local distance = (Ball.Position - hrp.Position).Magnitude
+                local velocity = (OldPosition - Ball.Position).Magnitude
+                
+                if velocity > 0 then
+                    local arrivalTime = distance / velocity
+                    local threshold = 10
+                    
+                    if ballSpeed > 150 then
+                        threshold = 8
+                    elseif ballSpeed > 80 then
+                        threshold = 9
+                    end
+                    
+                    if arrivalTime <= threshold then
+                        sendParry()
+                    end
+                end
+            end
+        end
+        
+        if (tick() - OldTick >= 1/60) then
+            OldTick = tick()
+            OldPosition = Ball.Position
+        end
+    end)
+    
+    parryConnections[Ball] = connection
+end
+
+-- 为现有球设置监听
+for _, ball in pairs(BallsFolder:GetChildren()) do
+    if VerifyBall(ball) then
+        setupParryForBall(ball)
+    end
+end
+
+BallsFolder.ChildAdded:Connect(function(Ball)
+    if VerifyBall(Ball) then
+        setupParryForBall(Ball)
+    end
+end)
+
+-- ============ YEW SPAM 发包函数 ============
+local spamRemote = nil
+local spamRawFire = nil
+local spamArgs = {}
+local spamHooked = false
+local spamPacketActivated = false
+local spamPacketThread = nil
+
+local function hookParryPacket()
+    if spamHooked then return end
+    local success, mt = pcall(getrawmetatable, game)
+    if not success then return end
+    
+    local oldIndex = mt.__index
+    setreadonly(mt, false)
+    mt.__index = function(self, key)
+        if key == "FireServer" then
+            return function(obj, ...)
+                local args = {...}
+                if #args == 7 and typeof(args[4]) == "CFrame" then
+                    spamRemote = obj
+                    spamRawFire = obj.FireServer
+                    spamArgs = args
+                    print("YEW SPAM: 成功钩住格挡包！")
+                    spamHooked = true
+                end
+                return oldIndex(self, key)(obj, ...)
+            end
+        end
+        return oldIndex(self, key)
+    end
+    setreadonly(mt, true)
+end
+
+local function sendSpamPacket()
+    if spamRemote and spamRawFire then
+        pcall(function() spamRawFire(spamRemote, unpack(spamArgs)) end)
+    end
+end
+
+-- Auto Spam: 球速快时自动启动 YEW SPAM 连发
 task.spawn(function()
     while true do
-        task.wait(0.03)
-        if autoParry and currentBall and LocalPlayer.Character then
-            local char = LocalPlayer.Character
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                -- 计算距离
-                local distance = (ballPosition - hrp.Position).Magnitude
-                
-                -- 计算到达时间 (其他脚本的核心方法)
-                local arrivalTime = distance / (ballSpeed + 0.01)
-                
-                -- 格挡阈值: 到达时间小于 0.3 秒时格挡
-                local threshold = 0.3
-                
-                -- 球速越快，阈值越大 (提前格挡)
-                if ballSpeed > 200 then threshold = 0.5
-                elseif ballSpeed > 150 then threshold = 0.45
-                elseif ballSpeed > 100 then threshold = 0.4
-                elseif ballSpeed > 60 then threshold = 0.35
+        task.wait(0.3)
+        if autoSpam then
+            local shouldActivate = ballSpeed > 100 or getNearbyPlayerCount() >= 2
+            if shouldActivate and not spamPacketActivated then
+                if not spamHooked then
+                    hookParryPacket()
                 end
-                
-                if arrivalTime < threshold and distance < 40 then
-                    sendParry()
+                spamPacketActivated = true
+                spamPacketThread = task.spawn(function()
+                    while spamPacketActivated do
+                        sendSpamPacket()
+                        task.wait(0.05)
+                    end
+                end)
+                print("Auto Spam: 球速 " .. math.floor(ballSpeed) .. "，自动启动 YEW SPAM")
+            elseif not shouldActivate and spamPacketActivated then
+                spamPacketActivated = false
+                if spamPacketThread then
+                    task.cancel(spamPacketThread)
+                    spamPacketThread = nil
                 end
+                print("Auto Spam: 条件不满足，自动停止 YEW SPAM")
             end
         end
     end
 end)
 
--- ============ YEW SPAM 独立窗口 ============
+-- ============ Manual Spam: YEW SPAM 独立窗口 ============
 local spamGui, spamFrame, spamButton, spamStroke
-local spamActivated = false
-local spamRemote, spamRawFire, spamArgs = nil, nil, {}
-local spamHooked = false
-local spamThreads = {}
+local spamManualActivated = false
+local spamManualThread = nil
 
 local function createSpamWindow()
     spamGui = Instance.new("ScreenGui")
@@ -215,52 +364,26 @@ local function createSpamWindow()
     
     spamButton.MouseButton1Click:Connect(function()
         if not spamHooked then
-            local success, mt = pcall(getrawmetatable, game)
-            if success then
-                local oldIndex = mt.__index
-                setreadonly(mt, false)
-                mt.__index = function(self, key)
-                    if key == "FireServer" then
-                        return function(obj, ...)
-                            local args = {...}
-                            if #args == 7 and typeof(args[4]) == "CFrame" then
-                                spamRemote = obj
-                                spamRawFire = obj.FireServer
-                                spamArgs = args
-                                spamButton.Text = "YEW: 已抓包 | 点击开始"
-                                print("YEW SPAM: 成功钩住格挡包！")
-                                spamHooked = true
-                            end
-                            return oldIndex(self, key)(obj, ...)
-                        end
-                    end
-                    return oldIndex(self, key)
-                end
-                setreadonly(mt, true)
-            end
+            hookParryPacket()
         end
         
-        spamActivated = not spamActivated
-        if spamActivated then
+        spamManualActivated = not spamManualActivated
+        if spamManualActivated then
             spamButton.Text = "⏹ STOP SPAM"
-            for i = 1, 2 do
-                spamThreads[i] = task.spawn(function()
-                    while spamActivated do
-                        if spamRemote and spamRawFire then
-                            pcall(function() spamRawFire(spamRemote, unpack(spamArgs)) end)
-                        end
-                        task.wait(0.1)  -- 放慢速度，让手动格挡能用
-                    end
-                end)
-            end
-            print("YEW SPAM: 2线程连发已开启")
+            spamManualThread = task.spawn(function()
+                while spamManualActivated do
+                    sendSpamPacket()
+                    task.wait(0.05)
+                end
+            end)
+            print("Manual SPAM: 已开启")
         else
             spamButton.Text = "▶ START SPAM"
-            for i = 1, #spamThreads do
-                task.cancel(spamThreads[i])
+            if spamManualThread then
+                task.cancel(spamManualThread)
+                spamManualThread = nil
             end
-            spamThreads = {}
-            print("YEW SPAM: 已关闭")
+            print("Manual SPAM: 已关闭")
         end
     end)
 end
@@ -271,22 +394,6 @@ task.spawn(function()
         task.wait(0.1)
         if spamFrame then
             spamFrame.Visible = manualSpam
-        end
-    end
-end)
-
--- Auto Spam: 球速快时自动开启 YEW SPAM
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        if autoSpam and spamButton then
-            if ballSpeed > 100 and not spamActivated then
-                spamButton.MouseButton1Click:Fire()
-                print("Auto Spam: 球速 " .. math.floor(ballSpeed) .. "，自动开启")
-            elseif ballSpeed <= 80 and spamActivated then
-                spamButton.MouseButton1Click:Fire()
-                print("Auto Spam: 球速 " .. math.floor(ballSpeed) .. "，自动关闭")
-            end
         end
     end
 end)
@@ -302,7 +409,6 @@ local function startFly()
     if flyBodyVelocity then flyBodyVelocity:Destroy() end
     if flyBodyGyro then flyBodyGyro:Destroy() end
     
-    humanoid.PlatformStand = true
     flyBodyVelocity = Instance.new("BodyVelocity")
     flyBodyVelocity.MaxForce = Vector3.new(1, 1, 1) * 100000
     flyBodyVelocity.Velocity = Vector3.new(0, 30, 0)
@@ -335,11 +441,6 @@ end
 local function stopFly()
     if flyBodyVelocity then flyBodyVelocity:Destroy() end
     if flyBodyGyro then flyBodyGyro:Destroy() end
-    local char = LocalPlayer.Character
-    if char then
-        local humanoid = char:FindFirstChild("Humanoid")
-        if humanoid then humanoid.PlatformStand = false end
-    end
 end
 
 -- ============ 更新函数 ============
@@ -463,73 +564,29 @@ local function updateCustomSky(theme)
     end
 end
 
--- Blade Ball 所有剑数据库
-local swordDatabase = {
-    ["Default"] = "",
-    ["Dark Blade"] = "rbxassetid://12345678",
-    ["Abyssal Blade"] = "rbxassetid://11111111",
-    ["Ice Sword"] = "rbxassetid://12345679",
-    ["Fire Sword"] = "rbxassetid://12345680",
-    ["Thunder Sword"] = "rbxassetid://12345681",
-    ["Light Sword"] = "rbxassetid://12345682",
-    ["Shadow Sword"] = "rbxassetid://12345683",
-    ["Dragon Sword"] = "rbxassetid://12345684",
-    ["Phoenix Blade"] = "rbxassetid://12345685",
-    ["Frostfang"] = "rbxassetid://12345686",
-    ["Inferno Blade"] = "rbxassetid://12345687",
-    ["Void Edge"] = "rbxassetid://12345688",
-    ["Celestial Blade"] = "rbxassetid://12345689",
-    ["Parry Blade"] = "rbxassetid://12345690",
-    ["Block Sword"] = "rbxassetid://12345691",
-    ["Reflector"] = "rbxassetid://12345692",
-    ["Counter Strike"] = "rbxassetid://12345693",
-    ["Chrome Dracule"] = "rbxassetid://12345694",
-}
+-- 皮肤更换
+local function changeSwordSkin(skinName)
+    local char = LocalPlayer.Character
+    if not char then return end
+    
+    for _, v in pairs(char:GetDescendants()) do
+        if v:IsA("Tool") and (v.Name:lower():find("sword") or v.Name:lower():find("blade")) then
+            pcall(function()
+                if v:FindFirstChild("Handle") and v.Handle:IsA("MeshPart") then
+                    v.Handle.MeshId = "rbxassetid://" .. skinName
+                end
+            end)
+        end
+    end
+end
 
+-- 玩家皮肤更换
 local playerSkinDatabase = {
     ["Default"] = "",
     ["Dark Knight"] = "rbxassetid://12345678",
     ["Ice Mage"] = "rbxassetid://12345679",
     ["Fire Lord"] = "rbxassetid://12345680",
-    ["Shadow Assassin"] = "rbxassetid://12345681",
-    ["Angel"] = "rbxassetid://12345682",
-    ["Demon"] = "rbxassetid://12345683",
 }
-
--- 搜索剑
-local function searchSword(searchText)
-    local results = {}
-    searchText = searchText:lower()
-    for name, _ in pairs(swordDatabase) do
-        if name:lower():find(searchText) then
-            table.insert(results, name)
-        end
-    end
-    return results
-end
-
--- 应用皮肤
-local function applySkinChanger(swordName)
-    if not skinChanger or swordName == "" then return end
-    local meshId = swordDatabase[swordName]
-    if not meshId then return end
-    
-    local char = LocalPlayer.Character
-    if not char then return end
-    
-    for _, v in pairs(char:GetDescendants()) do
-        if v:IsA("Tool") then
-            pcall(function()
-                if v:FindFirstChild("Handle") and v.Handle:IsA("MeshPart") then
-                    v.Handle.MeshId = meshId
-                end
-            end)
-        end
-        if v:IsA("MeshPart") and (v.Name:lower():find("sword") or v.Name:lower():find("blade")) then
-            pcall(function() v.MeshId = meshId end)
-        end
-    end
-end
 
 local function applyPlayerSkin(skinName)
     if not playerSkinChanger then return end
@@ -544,19 +601,6 @@ local function applyPlayerSkin(skinName)
     end
 end
 
--- 皮肤更换循环
-task.spawn(function()
-    while true do
-        task.wait(2)
-        if skinChanger and selectedSword ~= "" then
-            applySkinChanger(selectedSword)
-        end
-        if playerSkinChanger then
-            applyPlayerSkin(selectedPlayerSkin)
-        end
-    end
-end)
-
 -- 角色重生
 LocalPlayer.CharacterAdded:Connect(function(char)
     task.wait(0.5)
@@ -569,7 +613,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     if flyMode then startFly() end
     if skinChanger and selectedSword ~= "" then
         task.wait(1)
-        applySkinChanger(selectedSword)
+        changeSwordSkin(selectedSword)
     end
     if playerSkinChanger then
         task.wait(1)
@@ -794,91 +838,14 @@ local function makeInput(parent, title, placeholder, onChange)
     return card
 end
 
-local function makeSearchInput(parent, title, placeholder, onSearch)
-    local card = Instance.new("Frame", parent)
-    card.Size = UDim2.new(1, 0, 0, 120)
-    card.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
-    card.BorderSizePixel = 0
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 12)
-    Instance.new("UIStroke", card).Color = Color3.fromRGB(0, 195, 255)
-    
-    local titleLabel = Instance.new("TextLabel", card)
-    titleLabel.Size = UDim2.new(1, -20, 0, 22)
-    titleLabel.Position = UDim2.new(0, 12, 0, 8)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = title
-    titleLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
-    titleLabel.TextSize = 12
-    titleLabel.Font = Enum.Font.Gotham
-    
-    local input = Instance.new("TextBox", card)
-    input.Size = UDim2.new(1, -24, 0, 36)
-    input.Position = UDim2.new(0, 12, 0, 38)
-    input.BackgroundColor3 = Color3.fromRGB(25, 27, 35)
-    input.PlaceholderText = placeholder
-    input.Text = ""
-    input.TextColor3 = Color3.fromRGB(200, 200, 200)
-    input.Font = Enum.Font.Gotham
-    input.TextSize = 13
-    Instance.new("UICorner", input).CornerRadius = UDim.new(0, 8)
-    
-    local resultList = Instance.new("ScrollingFrame", card)
-    resultList.Size = UDim2.new(1, -24, 0, 40)
-    resultList.Position = UDim2.new(0, 12, 0, 78)
-    resultList.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
-    resultList.BorderSizePixel = 0
-    resultList.ScrollBarThickness = 2
-    resultList.Visible = false
-    Instance.new("UICorner", resultList).CornerRadius = UDim.new(0, 6)
-    
-    local resultLayout = Instance.new("UIListLayout", resultList)
-    resultLayout.Padding = UDim.new(0, 2)
-    
-    input:GetPropertyChangedSignal("Text"):Connect(function()
-        local searchText = input.Text
-        if searchText == "" then
-            resultList.Visible = false
-            return
-        end
-        local results = searchSword(searchText)
-        for _, child in pairs(resultList:GetChildren()) do
-            if child:IsA("TextButton") then child:Destroy() end
-        end
-        if #results > 0 then
-            resultList.Visible = true
-            resultList.CanvasSize = UDim2.new(0, 0, 0, #results * 30)
-            for _, swordName in ipairs(results) do
-                local btn = Instance.new("TextButton", resultList)
-                btn.Size = UDim2.new(1, 0, 0, 28)
-                btn.BackgroundColor3 = Color3.fromRGB(25, 27, 35)
-                btn.Text = swordName
-                btn.TextColor3 = Color3.fromRGB(200, 200, 200)
-                btn.TextSize = 11
-                btn.Font = Enum.Font.Gotham
-                btn.TextXAlignment = Enum.TextXAlignment.Left
-                Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-                btn.MouseButton1Click:Connect(function()
-                    input.Text = swordName
-                    resultList.Visible = false
-                    if onSearch then pcall(onSearch, swordName) end
-                end)
-            end
-        else
-            resultList.Visible = false
-        end
-    end)
-    
-    return card
-end
-
 -- ============ 创建主界面 ============
 local mainFrame = nil
 local openBtn = nil
 
 local function createMainHub()
     mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 580, 0, 550)
-    mainFrame.Position = UDim2.new(0.5, -290, 0.5, -275)
+    mainFrame.Size = UDim2.new(0, 580 * guiScale, 0, 550 * guiScale)
+    mainFrame.Position = UDim2.new(0.5, -290 * guiScale, 0.5, -275 * guiScale)
     mainFrame.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
@@ -944,7 +911,7 @@ local function createMainHub()
     verLabel.Size = UDim2.new(0, 55, 0, 22)
     verLabel.Position = UDim2.new(0, 70, 0, 44)
     verLabel.BackgroundTransparency = 1
-    verLabel.Text = "V1.0"
+    verLabel.Text = "V1.1"
     verLabel.TextColor3 = Color3.fromRGB(0, 195, 255)
     verLabel.TextSize = 12
     verLabel.Font = Enum.Font.GothamBold
@@ -1041,10 +1008,10 @@ local function createMainHub()
     
     -- Blatant 标签页
     local blatantCont = tabContents["Blatant"]
-    makeToggle(blatantCont, "Auto Parry", "自动格挡 (计算到达时间)", function(on) autoParry = on end)
-    makeToggle(blatantCont, "Auto Spam", "球速快时自动开启 YEW SPAM", function(on) autoSpam = on end)
+    makeToggle(blatantCont, "Auto Parry", "自动格挡 (后台运行，监听球位置)", function(on) autoParry = on end)
+    makeToggle(blatantCont, "Auto Spam", "球速快时自动启动 YEW SPAM", function(on) autoSpam = on end)
     makeToggle(blatantCont, "Manual Spam", "手动开关 YEW SPAM (独立窗口)", function(on) manualSpam = on end)
-    makeToggle(blatantCont, "Ball Stats", "显示球的速度 (实时)", function(on) ballStats = on end)
+    makeToggle(blatantCont, "Ball Stats", "显示球的速度", function(on) ballStats = on end)
     makeToggle(blatantCont, "Parry Visualiser", "格挡范围显示 (圆形)", function(on) parryVisualiser = on end)
     
     -- Players 标签页
@@ -1073,14 +1040,14 @@ local function createMainHub()
     
     -- Misc 标签页
     local miscCont = tabContents["Misc"]
-    makeToggle(miscCont, "Skin Changer", "剑皮肤更换 (输入剑的名字)", function(on) skinChanger = on end)
-    makeSearchInput(miscCont, "Search Sword", "输入剑的名字搜索...", function(swordName)
-        selectedSword = swordName
-        if skinChanger then applySkinChanger(swordName) end
-        print("✅ 已更换皮肤: " .. swordName)
+    makeToggle(miscCont, "Skin Changer", "剑皮肤更换 (输入剑的Mesh ID)", function(on) skinChanger = on end)
+    makeInput(miscCont, "Sword ID", "输入剑的 Mesh ID...", function(val)
+        selectedSword = val
+        if skinChanger then changeSwordSkin(val) end
+        print("✅ 已更换皮肤: " .. val)
     end)
-    makeToggle(miscCont, "Player Skin Changer", "玩家皮肤更换 (本地)", function(on) playerSkinChanger = on end)
-    makeDropdown(miscCont, "Player Skin", {"Default", "Dark Knight", "Ice Mage", "Fire Lord", "Shadow Assassin", "Angel", "Demon"}, function(val)
+    makeToggle(miscCont, "Player Skin Changer", "玩家皮肤更换", function(on) playerSkinChanger = on end)
+    makeDropdown(miscCont, "Player Skin", {"Default", "Dark Knight", "Ice Mage", "Fire Lord"}, function(val)
         selectedPlayerSkin = val
         if playerSkinChanger then applyPlayerSkin(val) end
     end)
@@ -1133,9 +1100,9 @@ local function createMainHub()
     switchTab("Blatant")
     
     print("========================================")
-    print("✅ YEW FREE Hub - Blade Ball V1.0 已启动")
-    print("⚔️ Auto Parry: 计算到达时间自动格挡")
-    print("🎨 Skin Changer: 输入剑的名字搜索并更换皮肤")
+    print("✅ YEW FREE Hub - Blade Ball V1.1 已启动")
+    print(isMobile and "📱 手机模式" or "💻 电脑模式")
+    print("⚔️ Auto Parry: 后台运行，监听球位置")
     print("🔑 按 Shift+X 打开/关闭菜单")
     print("========================================")
 end
@@ -1144,7 +1111,7 @@ end
 local speedDisplay = nil
 task.spawn(function()
     while true do
-        task.wait(0.05)
+        task.wait(1)
         if ballStats then
             if not speedDisplay or not speedDisplay.Parent then
                 speedDisplay = Instance.new("TextLabel", screenGui)
@@ -1165,42 +1132,39 @@ task.spawn(function()
     end
 end)
 
--- ============ 格挡范围显示 (圆形，半透明) ============
+-- ============ 格挡范围显示 ============
 local rangeCircle = nil
-task.spawn(function()
-    while true do
-        task.wait(0.05)
-        if parryVisualiser then
-            local char = LocalPlayer.Character
-            if char and char:FindFirstChild("HumanoidRootPart") then
-                if not rangeCircle or not rangeCircle.Parent then
-                    rangeCircle = Instance.new("Part")
-                    rangeCircle.Name = "ParryRangeCircle"
-                    rangeCircle.Shape = Enum.PartType.Ball
-                    rangeCircle.Size = Vector3.new(18, 18, 18)
-                    rangeCircle.Anchored = true
-                    rangeCircle.CanCollide = false
-                    rangeCircle.Transparency = 0.6
-                    rangeCircle.Color = Color3.fromRGB(0, 195, 255)
-                    rangeCircle.Material = Enum.Material.Neon
-                    rangeCircle.Parent = char
-                end
-                -- 根据球速改变大小
-                local size = 18
-                if ballSpeed > 250 then size = 45
-                elseif ballSpeed > 200 then size = 40
-                elseif ballSpeed > 150 then size = 35
-                elseif ballSpeed > 100 then size = 30
-                elseif ballSpeed > 60 then size = 25
-                elseif ballSpeed > 30 then size = 20
-                end
-                rangeCircle.Size = Vector3.new(size, size, size)
-                rangeCircle.CFrame = CFrame.new(char.HumanoidRootPart.Position)
-                rangeCircle.Transparency = 0.5
+RunService.RenderStepped:Connect(function()
+    if parryVisualiser then
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local hrp = char.HumanoidRootPart
+            if not rangeCircle or not rangeCircle.Parent then
+                rangeCircle = Instance.new("Part")
+                rangeCircle.Name = "ParryRangeCircle"
+                rangeCircle.Shape = Enum.PartType.Ball
+                rangeCircle.Size = Vector3.new(18, 18, 18)
+                rangeCircle.Anchored = true
+                rangeCircle.CanCollide = false
+                rangeCircle.Transparency = 0.85
+                rangeCircle.Color = Color3.fromRGB(0, 195, 255)
+                rangeCircle.Material = Enum.Material.Neon
+                rangeCircle.Parent = char
             end
-        else
-            if rangeCircle then rangeCircle:Destroy() end
+            local size = 18
+            if ballSpeed > 250 then size = 50
+            elseif ballSpeed > 200 then size = 45
+            elseif ballSpeed > 150 then size = 40
+            elseif ballSpeed > 100 then size = 35
+            elseif ballSpeed > 60 then size = 30
+            elseif ballSpeed > 30 then size = 25
+            end
+            rangeCircle.Size = Vector3.new(size, size, size)
+            rangeCircle.CFrame = CFrame.new(hrp.Position)
+            rangeCircle.Transparency = 0.85
         end
+    else
+        if rangeCircle then rangeCircle:Destroy() end
     end
 end)
 
@@ -1221,8 +1185,8 @@ local function createPasswordGui()
     bg.BorderSizePixel = 0
     
     local panel = Instance.new("Frame", passwordScreenGui)
-    panel.Size = UDim2.new(0, 380, 0, 320)
-    panel.Position = UDim2.new(0.5, -190, 0.5, -160)
+    panel.Size = UDim2.new(0, 380, 0, 340)
+    panel.Position = UDim2.new(0.5, -190, 0.5, -170)
     panel.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     panel.BorderSizePixel = 0
     Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 20)
@@ -1264,7 +1228,7 @@ local function createPasswordGui()
     
     local inputFrame = Instance.new("Frame", panel)
     inputFrame.Size = UDim2.new(0, 280, 0, 50)
-    inputFrame.Position = UDim2.new(0.5, -140, 0, 165)
+    inputFrame.Position = UDim2.new(0.5, -140, 0, 160)
     inputFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
     inputFrame.BorderSizePixel = 0
     Instance.new("UICorner", inputFrame).CornerRadius = UDim.new(0, 12)
@@ -1279,10 +1243,11 @@ local function createPasswordGui()
     passwordInput.PlaceholderColor3 = Color3.fromRGB(100, 100, 130)
     passwordInput.TextSize = 14
     passwordInput.Font = Enum.Font.Gotham
+    passwordInput.ClearTextOnFocus = false
     
     local errorLabel = Instance.new("TextLabel", panel)
     errorLabel.Size = UDim2.new(1, -40, 0, 20)
-    errorLabel.Position = UDim2.new(0, 20, 0, 225)
+    errorLabel.Position = UDim2.new(0, 20, 0, 220)
     errorLabel.BackgroundTransparency = 1
     errorLabel.Text = ""
     errorLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
@@ -1291,7 +1256,7 @@ local function createPasswordGui()
     
     local submitBtn = Instance.new("TextButton", panel)
     submitBtn.Size = UDim2.new(0, 200, 0, 45)
-    submitBtn.Position = UDim2.new(0.5, -100, 0, 255)
+    submitBtn.Position = UDim2.new(0.5, -100, 0, 250)
     submitBtn.BackgroundColor3 = Color3.fromRGB(0, 80, 100)
     submitBtn.Text = "UNLOCK"
     submitBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1300,15 +1265,42 @@ local function createPasswordGui()
     submitBtn.BorderSizePixel = 0
     Instance.new("UICorner", submitBtn).CornerRadius = UDim.new(0, 12)
     
+    -- Discord 按钮
+    local discordBtn = Instance.new("TextButton", panel)
+    discordBtn.Size = UDim2.new(0, 200, 0, 35)
+    discordBtn.Position = UDim2.new(0.5, -100, 0, 305)
+    discordBtn.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+    discordBtn.Text = "Join Discord"
+    discordBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    discordBtn.TextSize = 14
+    discordBtn.Font = Enum.Font.GothamBold
+    discordBtn.BorderSizePixel = 0
+    Instance.new("UICorner", discordBtn).CornerRadius = UDim.new(0, 8)
+    
+    local discordLink = "https://discord.gg/kfeMqHhaR"
+    
+    discordBtn.MouseButton1Click:Connect(function()
+        pcall(function()
+            Clipboard:set(discordLink)
+            errorLabel.Text = "✅ Discord link copied!"
+            errorLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
+            task.wait(2)
+            errorLabel.Text = ""
+        end)
+    end)
+    
     local function checkPassword()
-        if passwordInput.Text == "YEW666" then
+        if passwordInput.Text == "018828772928392" then
+            -- 完全销毁密码界面
             passwordScreenGui:Destroy()
+            -- 创建主菜单
             createMainHub()
             createSpamWindow()
-            print("✅ 密码正确！YEW FREE Hub V1.0 已启动")
-            print("📌 自动格挡使用到达时间算法 | 皮肤更换支持搜索")
+            print("✅ 密码正确！YEW FREE Hub V1.1 已启动")
         else
-            errorLabel.Text = "Wrong Password! Try: YEW666"
+            -- 不暴露密码，只提示错误
+            errorLabel.Text = "Invalid Password! Please try again."
+            errorLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
             passwordInput.Text = ""
             for i = 1, 3 do
                 submitBtn.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
@@ -1332,7 +1324,7 @@ end
 createPasswordGui()
 
 print("========================================")
-print("🔐 YEW FREE Hub - Blade Ball V1.0")
-print("🔑 密码: YEW666")
-print("📌 自动格挡: 计算球到达时间 | 球速实时显示")
+print("🔐 YEW FREE Hub - Blade Ball V1.1")
+print("🔑 新密码已设置")
+print("💬 Discord: https://discord.gg/kfeMqHhaR")
 print("========================================")
