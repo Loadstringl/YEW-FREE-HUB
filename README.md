@@ -1,30 +1,40 @@
--- Configuration
-local ScriptName = "ProInjector"
-local Version = "1.0.2"
+-- [[ SCRIPT ERROR NOTIFICATION SYSTEM ]] --
 
--- Function to handle error display
-local function reportError(errorCode)
-    print("========================================")
-    print("[" .. ScriptName .. "] ERROR DETECTED")
-    print("Status: Failed to execute")
-    print("Error Code: " .. errorCode)
-    print("Message: Please check your connection or update the script.")
-    print("========================================")
-end
+local StarterGui = game:GetService("StarterGui")
 
--- Simulation of an injection process
-local function startInjection()
-    print("Initializing " .. ScriptName .. "...")
+-- 1. Function to show the "Subtitle" error notification
+local function ShowScriptError()
+    local success, err = pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "SCRIPT ERROR";            -- 标题：脚本错误
+            Text = "Please wait for update.";  -- 内容：请等待更新
+            Duration = 15;                     -- 持续显示15秒
+            Button1 = "OK";                    -- 确认按钮
+        })
+    end)
     
-    -- Logic Check: Change this to 'false' to trigger the error
-    local isSuccessful = false 
-    
-    if isSuccessful then
-        print("Success: Script injected successfully!")
-    else
-        reportError("ERR_NULL_POINTER_EXCEPTION")
+    -- If the executor's GUI fails, print to console as backup
+    if not success then
+        warn("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        warn("SCRIPT ERROR")
+        warn("PLEASE WAIT FOR UPDATE.")
+        warn("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
     end
 end
 
--- Run the process
-startInjection()
+-- 2. Your Main Script Logic with Error Catching
+local function StartExecution()
+    -- This simulates a script failure (e.g., version mismatch)
+    -- If you want to trigger the error, leave the next line as is.
+    -- If you want the script to run, comment out the 'error' line.
+    error("VERSION_OUTDATED") 
+end
+
+-- [[ THE PROTECTOR (PCALL) ]] --
+-- This detects if your script has an issue and triggers the 15s notification
+local success, result = pcall(StartExecution)
+
+if not success then
+    -- When the script fails, it shows the "SCRIPT ERROR, PLEASE WAIT FOR UPDATE" message
+    ShowScriptError()
+end
