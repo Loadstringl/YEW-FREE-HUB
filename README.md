@@ -1,5 +1,5 @@
-local target_key = "YEW-FREE-VIP-999-SECURE-HASH-8821-X-001-ALPHA-BETA-GAMING-FORCE-666-999"
-local my_discord = "https://discord.gg/AcR9ZJgRg"
+local target_key = "717727271818828382818177918181718817272728181827272772718282737272881818283737373728288182828283737466E728272772YHDUDUDHDHW8SUFHHSHSIISUSUSJSHS-YEW-FREE"
+local my_discord = "https://discord.gg/S34maAp3J"
 
 -- 只有验证成功才会执行这一段你提供的核心逻辑
 local function start_yew_script()
